@@ -1,0 +1,102 @@
+stages:
+  - build-dev
+  - deploy-dev
+  - build-prod
+  - deploy-prod
+  - cache-clear
+
+build-dev:
+  stage: build-dev
+  environment: develop
+  image: node:18.16.0
+  dependencies: []
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+  before_script:
+    - yarn config set cache-folder .yarn
+    - yarn install
+  script:
+    - echo "Building application..."
+    - yarn generate
+    - echo "Application successfully built."
+  artifacts:
+    name: "build-dev"
+    paths:
+      - dist/
+      - .nuxt/
+      - node_modules/
+
+deploy-dev:
+  stage: deploy-dev
+  environment: develop
+  image: alpine:latest
+  dependencies:
+    - build-dev
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+  before_script:
+    - apk update && apk add openssh-client rsync
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | ssh-add -
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/known_hosts
+    - echo "HOST *" > ~/.ssh/config
+    - echo "StrictHostKeyChecking no" >> ~/.ssh/config
+  script:
+    - echo "Deploying application..."
+    - rsync -atv -e "ssh -p $PORT" --delete-before --progress dist/ $USERNAME@$HOST:$PATH_PROJECT_SERVER
+    - echo "Application successfully deployed."
+
+build-prod:
+  stage: build-prod
+  environment: master
+  image: node:18.16.0
+  dependencies: []
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" && ($CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "trigger")
+  before_script:
+    - yarn config set cache-folder .yarn
+    - yarn install
+  script:
+    - echo "Building application..."
+    - yarn generate
+    - echo "Application successfully built."
+  artifacts:
+    name: "build-prod"
+    paths:
+      - dist/
+      - .nuxt/
+      - node_modules/
+
+deploy-prod:
+  stage: deploy-prod
+  environment: master
+  image: alpine:latest
+  dependencies:
+    - build-prod
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" && ($CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "trigger")
+  before_script:
+    - apk update && apk add openssh-client rsync
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | ssh-add -
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/known_hosts
+    - echo "HOST *" > ~/.ssh/config
+    - echo "StrictHostKeyChecking no" >> ~/.ssh/config
+  script:
+    - echo "Deploying application..."
+    - rsync -atv -e "ssh -p $PORT" --delete-before --progress dist/ $USERNAME@$HOST:$PATH_PROJECT_SERVER
+    - echo "Application successfully deployed."
+
+cache-clear:
+  stage: cache-clear
+  image: alpine:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "master" && ($CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "trigger")
+  script:
+    - echo "Clearing cache..."
+    - apk update && apk add curl
+    - 'curl --request POST --url https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/purge_cache --header "Content-Type: application/json" --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --data "{ \"purge_everything\": true }"'
+    - echo "Cache successfully cleared."
